@@ -1,0 +1,8 @@
+.env
+.venv
+env/
+venv/
+__pycache__/
+Tyroo-dummy-data.csv
+temp.csv.gz
+data_pipeline.log
