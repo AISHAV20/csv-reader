@@ -1,14 +1,13 @@
-# data_pipeline.py
+import requests
 import os
 import gzip
 import logging
-import uuid
 import pandas as pd
 import numpy as np
-import requests
-from database import SessionLocal, ProcessedData
-from sqlalchemy.dialects.postgresql import insert
 from datetime import datetime
+from multiprocessing import Pool, cpu_count
+
+from database import ProcessedData, SessionLocal, get_session
 
 # Configure logging
 logging.basicConfig(
@@ -26,17 +25,7 @@ CHUNK_SIZE = 5000  # Adjust based on memory constraints
 CSV_URL = 'https://tyroo-engineering-assesments.s3.us-west-2.amazonaws.com/Tyroo-dummy-data.csv.gz'
 TEMP_FILE = 'temp.csv.gz'
 
-CHUNK_SIZE_DOWNLOAD = 1024 * 1024  # 1MB chunk
-TIMEOUT = 30
-
-class DataProcessor:
-    def __init__(self):
-        self.session = SessionLocal()
-
-    def __del__(self):
-        self.session.close()
-
-    def download_file(self) -> None:
+def download_file() -> None:
         """Stream download with 100 MB progress logging."""
         try:
             logger.info(f"Starting download from {CSV_URL}")
@@ -79,132 +68,101 @@ class DataProcessor:
             if os.path.exists(TEMP_FILE):
                 logger.info("Removing partial download...")
                 os.remove(TEMP_FILE)
-            self.session.close()
             exit(1)
 
         except Exception as e:
             logger.error(f"Download failed: {str(e)}")
             raise
 
-    def clean_and_transform(self, df: pd.DataFrame):
-        """Perform comprehensive data cleaning and transformation."""
-        try:
-            # Create a copy to avoid SettingWithCopyWarning
-            df = df.copy()
-            
-            # ---- 1. Initial Cleaning ----
-            # Replace empty strings and whitespace-only strings with NaN
-            df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
-            
-            # ---- 2. Type Conversion ----
-            # Numeric columns with coercion
-            numeric_cols = [
-                'current_price', 'price', 'platform_commission_rate',
-                'product_commission_rate', 'bonus_commission_rate',
-                'discount_percentage', 'promotion_price', 'seller_rating',
-                'rating_avg_value'
-            ]
-            for col in numeric_cols:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-            # Integer columns
-            df['number_of_reviews'] = pd.to_numeric(
-                df['number_of_reviews'], 
-                errors='coerce'
-            ).fillna(0).astype(int)
-            
-            # Boolean column
-            df['is_free_shipping'] = df['is_free_shipping'].astype(bool)
-            
-            # ---- 3. Text Normalization ----
-            text_cols = [
-                'product_name', 'description', 'seller_name', 'brand_name',
-                'venture_category1_name_en', 'venture_category2_name_en',
-                'venture_category3_name_en', 'venture_category_name_local',
-                'availability'
-            ]
-            for col in text_cols:
-                df[col] = df[col].str.strip()
-                df[col] = df[col].str.replace(r'\s+', ' ', regex=True)
-            
-            # ---- 4. URL Validation ----
-            url_cols = [
-                'product_small_img', 'product_medium_img', 'product_big_img',
-                'image_url_2', 'image_url_3', 'image_url_4', 'image_url_5',
-                'product_url', 'seller_url', 'deeplink'
-            ]
-            for col in url_cols:
-                df[col] = df[col].where(
-                    df[col].str.contains(r'^https?://', regex=True, na=False),
-                    np.nan
-                )
+def clean_and_insert_chunk(df_chunk):
+    """Function to be executed in separate processes."""
+    session = get_session()
 
-            # Remove rows missing critical fields
-            df.dropna(subset=['product_id'], inplace=True)
-            df.reset_index(drop=True, inplace=True)
-            
-            return df
-        
-        except Exception as e:
-            logger.error(f"Data transformation error: {str(e)}")
-            return None
+    try:
+        # --- Cleaning ---
+        df = df_chunk.copy()
+        df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
 
-    def process_file(self) -> None:
-        """Process CSV in strict 10,000-record batches with immediate saving."""
-        try:
-            logger.info("Starting batch file processing")
-            processed_count = 0
-            batch_size = 10000  # Both read and insert batch size
+        numeric_cols = [
+            'current_price', 'price', 'platform_commission_rate',
+            'product_commission_rate', 'bonus_commission_rate',
+            'discount_percentage', 'promotion_price', 'seller_rating',
+            'rating_avg_value'
+        ]
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
 
-            with gzip.open(TEMP_FILE, 'rt') as f , SessionLocal() as session:
-                chunk_iter = pd.read_csv(f, chunksize=batch_size, low_memory=False)
+        df['number_of_reviews'] = pd.to_numeric(df['number_of_reviews'], errors='coerce').fillna(0).astype(int)
+        df['is_free_shipping'] = df['is_free_shipping'].astype(bool)
 
-                for i, df in enumerate(chunk_iter, start=1):
-                    logger.info(f"Processing batch #{i}, records: {len(df)}")
-                    df_clean = self.clean_and_transform(df)
+        text_cols = [
+            'product_name', 'description', 'seller_name', 'brand_name',
+            'venture_category1_name_en', 'venture_category2_name_en',
+            'venture_category3_name_en', 'venture_category_name_local',
+            'availability'
+        ]
+        for col in text_cols:
+            df[col] = df[col].str.strip()
+            df[col] = df[col].str.replace(r'\s+', ' ', regex=True)
 
-                    if df_clean is None:
-                        logger.warning(f"Batch #{i} skipped due to cleaning error")
-                        continue
+        url_cols = [
+            'product_small_img', 'product_medium_img', 'product_big_img',
+            'image_url_2', 'image_url_3', 'image_url_4', 'image_url_5',
+            'product_url', 'seller_url', 'deeplink'
+        ]
+        for col in url_cols:
+            df[col] = df[col].where(
+                df[col].str.contains(r'^https?://', regex=True, na=False),
+                np.nan
+            )
 
-                    # 3. Convert to records and insert
-                    records = df_clean.to_dict('records')
-                    try:
-                        session.bulk_insert_mappings(
-                            ProcessedData,
-                            records,
-                            render_nulls=True
-                        )
-                        session.commit()
-                        
-                        processed_count += len(df_clean)
-                        logger.info(
-                            f"Saved batch with {len(df_clean)} records | "
-                            f"Total saved: {processed_count}"
-                        )
-                    
-                    except Exception as e:
-                        session.rollback()
-                        logger.error(f"Failed to save batch: {str(e)}")
-                        raise
+        df.dropna(subset=['product_id'], inplace=True)
+        df.reset_index(drop=True, inplace=True)
 
-            logger.info(f"Finished processing. Total records saved: {processed_count}")
+        # --- Insert to DB ---
+        records = df.to_dict('records')
+        session.bulk_insert_mappings(ProcessedData, records, render_nulls=True)
+        session.commit()
+        logger.info(f"Inserted {len(df)} records")
+        session.close()
+        return len(df)
 
-        except Exception as e:
-            logger.critical(f"File processing failed: {str(e)}", exc_info=True)
-            raise
+    except Exception as e:
+        logger.error(f"Error in worker process: {e}")
+        session.rollback()
+        session.close()
+        return 0
+
+def process_file():
+    """Use multiprocessing to process and insert CSV chunks."""
+    try:
+        logger.info("Starting parallel CSV processing with multiprocessing")
+        batch_size = 10000
+        num_workers = max(cpu_count() - 1, 1)
+        processed_total = 0
+
+        with gzip.open(TEMP_FILE, 'rt') as f:
+            chunk_iter = pd.read_csv(f, chunksize=batch_size, low_memory=False)
+
+            with Pool(processes=num_workers) as pool:
+                for i, count in enumerate(pool.imap(clean_and_insert_chunk, chunk_iter), start=1):
+                    processed_total += count
+                    logger.info(f"Batch #{i} processed. Total inserted: {processed_total}")
+
+        logger.info(f"All done. Total records inserted: {processed_total}")
+
+    except Exception as e:
+        logger.critical(f"Multiprocessing pipeline failed: {e}", exc_info=True)
+        raise
+
 
 if __name__ == '__main__':
-    processor = DataProcessor()
     try:
         start_time= datetime.now()
-        # processor.download_file()
-        processor.process_file()
+        download_file()
+        process_file()
         end_time = datetime.now()
         logger.info(f"Total processing time: {end_time - start_time}")
     except Exception as e:
         logger.critical(f"Pipeline failed: {str(e)}")
         exit(1)
-    finally:
-        processor.session.close()
-        logger.info("Database session closed")
