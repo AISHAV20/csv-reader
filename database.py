@@ -25,9 +25,9 @@ class ProcessedData(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True)
     
-    product_id = Column(String(50), nullable=False)
-    product_name = Column(String(255), nullable=False)
-    sku_id = Column(String(50))
+    product_id = Column(String, nullable=False)
+    product_name = Column(String)
+    sku_id = Column(String)
     description = Column(Text)
     
     current_price = Column(Float)
@@ -38,35 +38,34 @@ class ProcessedData(Base):
     discount_percentage = Column(Float)
     promotion_price = Column(Float)
     
-    product_small_img = Column(String(500))
-    product_medium_img = Column(String(500))
-    product_big_img = Column(String(500))
-    image_url_2 = Column(String(500))
-    image_url_4 = Column(String(500))
-    image_url_5 = Column(String(500))
-    image_url_3 = Column(String(500))
-    product_url = Column(String(500))
-    seller_url = Column(String(500))
-    deeplink = Column(String(500))
+    product_small_img = Column(Text)
+    product_medium_img = Column(Text)
+    product_big_img = Column(Text)
+    image_url_2 = Column(Text)
+    image_url_3 = Column(Text)
+    image_url_4 = Column(Text)
+    image_url_5 = Column(Text)
+    product_url = Column(Text)
+    seller_url = Column(Text)
+    deeplink = Column(Text)
     
-    business_type = Column(String(50))
-    business_area = Column(String(50))
-    seller_name = Column(String(255))
-    brand_name = Column(String(255))
+    business_type = Column(String)
+    business_area = Column(String)
+    seller_name = Column(String)
+    brand_name = Column(String)
     
-    venture_category1_name_en = Column(String(100))
-    venture_category2_name_en = Column(String(100))
-    venture_category3_name_en = Column(String(100))
-    venture_category_name_local = Column(String(100))
+    venture_category1_name_en = Column(String)
+    venture_category2_name_en = Column(String)
+    venture_category3_name_en = Column(String)
+    venture_category_name_local = Column(String)
     
     seller_rating = Column(Float)
     rating_avg_value = Column(Float)
     number_of_reviews = Column(Integer)
     
     is_free_shipping = Column(Boolean)
-    availability = Column(String(50))
+    availability = Column(String)
     
-    # Indexes
     __table_args__ = (
         Index('idx_product_id', 'product_id'),
         Index('idx_seller', 'seller_name'),
