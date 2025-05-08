@@ -110,6 +110,13 @@ def create_tables(engine):
         logger.error(f"Error creating tables: {str(e)}")
         raise
 
+def get_session():
+    """Create a new, independent session (safe for multiprocessing)"""
+    engine = create_engine_pool()
+    SessionLocal = create_session_factory(engine)
+    return SessionLocal()
+
+
 # Initialize database components
 engine = create_engine_pool()
 SessionLocal = create_session_factory(engine)

@@ -4,5 +4,6 @@ env/
 venv/
 __pycache__/
 Tyroo-dummy-data.csv
+Tyroo-dummy-data.csv.gz
 temp.csv.gz
 data_pipeline.log

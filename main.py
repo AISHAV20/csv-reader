@@ -121,7 +121,7 @@ class DataProcessor:
                 'product_name', 'description', 'seller_name', 'brand_name',
                 'venture_category1_name_en', 'venture_category2_name_en',
                 'venture_category3_name_en', 'venture_category_name_local',
-                'sku_id', 'business_type', 'business_area', 'availability'
+                'availability'
             ]
             for col in text_cols:
                 df[col] = df[col].str.strip()
@@ -148,23 +148,6 @@ class DataProcessor:
         except Exception as e:
             logger.error(f"Data transformation error: {str(e)}")
             return None
-
-    def _save_debug_data(self, df: pd.DataFrame, error_type: str) -> None:
-        """Save problematic data for debugging."""
-        try:
-            debug_dir = "debug_data"
-            os.makedirs(debug_dir, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{debug_dir}/error_{error_type}_{timestamp}.csv"
-            
-            # Ensure we have a DataFrame (not TextFileReader)
-            if hasattr(df, 'to_csv'):
-                df.to_csv(filename, index=False)
-                logger.warning(f"Saved debug data to {filename}")
-            else:
-                logger.error(f"Cannot save debug data - invalid object type: {type(df)}")
-        except Exception as e:
-            logger.error(f"Failed to save debug data: {str(e)}")
 
     def process_file(self) -> None:
         """Process CSV in strict 10,000-record batches with immediate saving."""
@@ -214,8 +197,11 @@ class DataProcessor:
 if __name__ == '__main__':
     processor = DataProcessor()
     try:
+        start_time= datetime.now()
         # processor.download_file()
         processor.process_file()
+        end_time = datetime.now()
+        logger.info(f"Total processing time: {end_time - start_time}")
     except Exception as e:
         logger.critical(f"Pipeline failed: {str(e)}")
         exit(1)
