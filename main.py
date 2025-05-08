@@ -32,8 +32,6 @@ TIMEOUT = 30
 class DataProcessor:
     def __init__(self):
         self.session = SessionLocal()
-        self.total_processed = 0
-        self.failed_chunks = 0
 
     def __del__(self):
         self.session.close()
@@ -88,60 +86,6 @@ class DataProcessor:
             logger.error(f"Download failed: {str(e)}")
             raise
 
-    def process_chunk(self, df: pd.DataFrame) -> list:
-        """Clean and transform data chunk"""
-        try:
-            # Generate UUIDs
-            df['id'] = [uuid.uuid4() for _ in range(len(df))]
-            
-            # Rename columns with typos
-            df.rename(columns={'promotin_price': 'promotion_price'}, inplace=True)
-
-            # Convert numeric columns
-            numeric_cols = [
-                'current_price', 'price', 'platform_commission_rate',
-                'product_commission_rate', 'bonus_commission_rate',
-                'discount_percentage', 'promotion_price'
-            ]
-            df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
-
-            # Convert boolean column
-            df['is_free_shipping'] = df['is_free_shipping'].astype(bool)
-
-            # Clean text columns
-            text_cols = ['product_name', 'brand_name', 'description']
-            df[text_cols] = df[text_cols].fillna('').apply(lambda x: x.str.strip())
-
-            # Convert URLs to nullable strings
-            url_cols = [col for col in df.columns if '_url' in col or 'link' in col]
-            df[url_cols] = df[url_cols].where(df[url_cols].str.startswith('http', na=False), None)
-
-            # Convert category names
-            category_cols = [
-                'venture_category1_name_en',
-                'venture_category2_name_en',
-                'venture_category3_name_en'
-            ]
-            df[category_cols] = df[category_cols].fillna('Uncategorized').apply(lambda x: x.str.title())
-
-            return df.to_dict('records')
-
-        except Exception as e:
-            logger.error(f"Chunk processing failed: {str(e)}")
-            raise
-
-    def insert_batch(self, batch: list) -> None:
-        """Insert batch with transaction management"""
-        try:
-            self.session.bulk_insert_mappings(ProcessedData, batch)
-            self.session.commit()
-            self.total_processed += len(batch)
-        except Exception as e:
-            self.session.rollback()
-            self.failed_chunks += 1
-            logger.error(f"Batch insert failed: {str(e)}")
-            raise
-
     def clean_and_transform(self, df: pd.DataFrame):
         """Perform comprehensive data cleaning and transformation."""
         try:
@@ -176,7 +120,8 @@ class DataProcessor:
             text_cols = [
                 'product_name', 'description', 'seller_name', 'brand_name',
                 'venture_category1_name_en', 'venture_category2_name_en',
-                'venture_category3_name_en', 'venture_category_name_local'
+                'venture_category3_name_en', 'venture_category_name_local',
+                'sku_id', 'business_type', 'business_area', 'availability'
             ]
             for col in text_cols:
                 df[col] = df[col].str.strip()
@@ -193,33 +138,14 @@ class DataProcessor:
                     df[col].str.contains(r'^https?://', regex=True, na=False),
                     np.nan
                 )
-            
-            # ---- 5. Business Logic ----
-            # Calculate actual discount percentage if not provided
-            # mask = (df['current_price'].notna() & 
-            #     df['price'].notna() & 
-            #     (df['price'] > 0))
-            # df.loc[mask, 'discount_percentage'] = (
-            #     (df.loc[mask, 'price'] - df.loc[mask, 'current_price']) / 
-            #     df.loc[mask, 'price'] * 100
-            # )
-            
-            # ---- 6. Final Validation ----
+
             # Remove rows missing critical fields
-            df.dropna(
-                subset=['product_id'],
-                how='any',
-                inplace=True
-            )
-            # if df is None:
-            #     print('df is none',df)
-            # Reset index after dropping rows
+            df.dropna(subset=['product_id'], inplace=True)
             df.reset_index(drop=True, inplace=True)
             
             return df
         
         except Exception as e:
-            print(df.get('current_price', 'current_price column not found'))
             logger.error(f"Data transformation error: {str(e)}")
             return None
 
